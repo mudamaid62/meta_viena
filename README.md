@@ -72,7 +72,7 @@ penguin guided_nuclassemble [R1] [R2] [output] [temp] --remove-tmp-files
 perl filter_by_length.pl penguin_contigs.fasta [minimun contig length] [maximun contig length] > [filtered_assembly.fa]
 ```
 
-## Get ORFs from the metaspades and penguin assemblies, and tranlate them into proteins using Prodigal
+## Get ORFs from the metaspades and penguin assemblies, and translate them into proteins using Prodigal
 
 1. Run Prodigal
 
