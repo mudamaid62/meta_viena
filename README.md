@@ -231,7 +231,7 @@ singlem microbial_fraction -1 [sample_name_1.fastq.gz] -2 [sample_name_2.fastq.g
 mmseqs createdb peptides.faa peptides_DB
 ```
 
-13. Run **MMSeqs2** using the RAT reads as queries against the proteins
+13. Run **MMSeqs2** using the RAT reads as queries against the peptide database
 
 ```
 mmseqs easy-search [RAT_1.fastq] peptides_DB [RAT_1.m8] tmp --alignment-mode 3 -s 7 --format-output "query,target,pident,qcov,tcov,evalue,bits,qlen,tlen,alnlen" --remove-tmp-files
