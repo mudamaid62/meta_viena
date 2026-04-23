@@ -197,7 +197,7 @@ args_oap make_db -i peptides.faa
 
 ```
 args_oap stage_one -i [reads_directory] -o [args_oap_out] -t 16 -f fastq --database peptides.faa
-args_oap stage_two -i [args_oap_out]  -t 16 --database peptides.faa --structure1 peptides_structure.txt
+args_oap stage_two -i [args_oap_out] -t 16 --database peptides.faa --structure1 peptides_structure.txt
 ```
 
 8. Run **fasta_to_fastq.pl** to recover the reads mapping to the peptides from the args_oap output
