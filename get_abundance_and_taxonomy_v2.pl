@@ -4,7 +4,7 @@ use strict;
 use Getopt::Long qw(GetOptions);
 
 my $help = "";
-my $usage = "Quantify genes/proteins/peptides in copies per cell and get related taxonomies\n\nUSAGE\n$0 --smf [singleM microbial_fraction file] --r2c [RAT read2classification file] --m8 [mmseqs easy-search file] --otu_table [OTU table output] > [Abundance and Taxonomy table]\n\nOptional arguments:\n\t--max_evalue [float] default = 1e-7\n\t--min_pident [float 0-100] default = 80\n\t--min_qcov [float 0-1] default = 0.75\n\t--min_tcov [float 0-1] default = 0\n\t--min_alnlen [int in aa] default = 25\n";
+my $usage = "Quantify genes/proteins/peptides in copies per cell and get related taxonomies\n\nUSAGE\n$0 --smf [singleM microbial_fraction file] --r2c [RAT read2classification file] --m8 [mmseqs easy-search file] --otu_table [OTU table output] > [Abundance and Taxonomy table]\n\nOptional arguments:\n\t--max_evalue\t[float 0-inf]\tdefault = 1e-7\n\t--min_pident\t[float 0-100]\tdefault = 80\n\t--min_qcov\t[float 0-1]\tdefault = 0.75\n\t--min_tcov\t[float 0-1]\tdefault = 0\n\t--min_alnlen\t[int in aa]\tdefault = 25\n";
 my $smf_file = "";
 my $rat_r2c = "";
 my $m8_file = "";
