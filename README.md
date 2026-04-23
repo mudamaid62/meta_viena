@@ -148,7 +148,7 @@ python randomize_peptides_PA_v3.py -i all_metapeptides.csv -o all_random_metapep
 perl make_TDA_fasta_from_random_out.pl all_random_metapeptides.csv [TDA_fasta_prefix] [Targets_prefix] [Decoys_prefix] 30000000
 ``` 
 
-## Quantify genes/proteins in copies/cell and get related taxonomies
+## Quantify genes/proteins/peptides in copies per cell and get related taxonomies
 
 1. Run metaSPAdes using your reads
 
