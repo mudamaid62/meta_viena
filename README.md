@@ -148,7 +148,7 @@ python randomize_peptides_PA_v3.py -i all_metapeptides.csv -o all_random_metapep
 perl make_TDA_fasta_from_random_out.pl all_random_metapeptides.csv [TDA_fasta_prefix] [Targets_prefix] [Decoys_prefix] 30000000
 ``` 
 
-## Quantify genes/proteins/peptides in copies per cell and get related taxonomies
+## Quantify peptides in copies per cell and get related taxonomies
 
 1. Run metaSPAdes using your reads
 
@@ -176,46 +176,35 @@ CAT_pack contigs -c metaspades_contigs.fa -d cat_database/db/ -t cat_database/ta
 CAT_pack bins -b [MAG dir] -d cat_database/db/ -t cat_database/tax/ -s [.fa] -o MAGs_BAT --no_stars -n 16 --sensitive --block_size 6 --tmpdir temp/
 ```
 
-6. Use **ARGs_OAP** to build a database from peptides multifasta (DDA or DIA peptides) 
+6. Create a **MMSeqs2** database for your peptides
 
 ```
-args_oap make_db -i peptides.faa
+mmseqs createdb peptides.faa peptides_DB
 ```
 
-7. Run **ARGs_OAP** to get reads that map to the proteins to quantify. 
-
-- Read files must be in a single directory and be called sample_name_1.fastq.gz and sample_name_2.fastq.gz
-- Create a structure file for your peptides (tab-separated), where the first column has the header Peptide and all peptide names, and any ammount of extra columns (at least one) where cluster types are specicified
-> e.g.
-
-| Peptide | Cluster |
-| ----------- | ----------- |
-| pep_A | cluster_A |
-| pep_B | cluster_A |
-| pep_C | cluster_B |
-| pep_D | cluster_B |
-
+7. Run **MMSeqs2** using your metagenomic reads as queries against the peptide database
 ```
-args_oap stage_one -i [reads_directory] -o [args_oap_out] -t 16 -f fastq --database peptides.faa
-args_oap stage_two -i [args_oap_out] -t 16 --database peptides.faa --structure1 peptides_structure.txt --e 100 --id 100 --qcov 0 --length 7 
+mmseqs easy-search reads_1.fastq.gz peptides_DB reads_1.m8 tmp --search-type 2 --alignment-mode 3 -s 7.5 -k 5 -e 100 --min-seq-id 0.95 --format-output "query,target,pident,qcov,tcov,evalue,bits,qlen,tlen,alnlen,qseq" --remove-tmp-files --threads 10
+mmseqs easy-search reads_2.fastq.gz peptides_DB reads_2.m8 tmp --search-type 2 --alignment-mode 3 -s 7.5 -k 5 -e 100 --min-seq-id 0.95 --format-output "query,target,pident,qcov,tcov,evalue,bits,qlen,tlen,alnlen,qseq" --remove-tmp-files --threads 10
 ```
 
-8. Run **fasta_to_fastq.pl** to recover the reads mapping to the peptides from the args_oap output
+8. Run **make_paired_fastq_from_m8.pl** to recover reads that align to the peptides from the mmseqs outputs
 
 ```
-perl fasta_to_fastq.pl args_oap_out/extracted.filtered.fa [RAT_1.fastq] [RAT_2.fastq] [RAT_single.fastq]
+perl make_paired_fastq_from_m8.pl reads_1.m8 reads_2.m8 recovered_reads_1.fastq recovered_reads_2.fastq recovered_reads_single.fastq
+gzip recovered_reads_1.fastq recovered_reads_2.fastq recovered_reads_single.fastq
 ```
 
-9. Get taxonomic classifications from the paired end reads using **RAT**
+9. Get taxonomic classifications from the paired end recovered reads using **RAT**
 
 ```
-CAT_pack reads -c metaspades_contigs.fa -b [MAG dir] -s [.fa] -t cat_database/tax/ -m mcr -o [RAT_paired] -1 [RAT_1.fastq] -2 [RAT_2.fastq] -d cat_database/db/ --no_stars -n 16 --sensitive --block_size 2 --tmpdir temp --c2c contigs_CAT.contig2classification.txt --b2c MAGs_BAT.bin2classification.txt
+CAT_pack reads -c metaspades_contigs.fa -b [MAG dir] -s [.fa] -t cat_database/tax/ -m mcr -o [RAT_paired] -1 [recovered_reads_1.fastq.gz] -2 [recovered_reads_2.fastq.gz] -d cat_database/db/ --no_stars -n 18 --sensitive --block_size 15 --tmpdir temp --c2c contigs_CAT.contig2classification.txt --b2c MAGs_BAT.bin2classification.txt
 ```
 
 10. Use the modified CAT_pack script included in this repo to run RAT using single end reads
 
 ```
-CAT_pack reads -c metaspades_contigs.fa -b [MAG dir] -s [.fa] -t cat_database/tax/ -m mcr -o [RAT_single] -1 [RAT_single.fastq] -d cat_database/db/ --no_stars -n 16 --sensitive --block_size 2 --tmpdir temp/ --c2c contigs_CAT.contig2classification.txt --b2c MAGs_BAT.bin2classification.txt
+CAT_pack reads -c metaspades_contigs.fa -b [MAG dir] -s [.fa] -t cat_database/tax/ -m mcr -o [RAT_single] -1 [recovered_reads_single.fastq.gz] -d cat_database/db/ --no_stars -n 18 --sensitive --block_size 15 --tmpdir temp/ --c2c contigs_CAT.contig2classification.txt --b2c MAGs_BAT.bin2classification.txt
 ```
 
 11. Run **SingleM** in microbial_fraction mode using all the metagenomic reads (NOT THE RAT READS) to get the estimated prokaryote genome size and number of prokaryotic bases
@@ -225,29 +214,15 @@ singlem pipe -1 [sample_name_1.fastq.gz] -2 [sample_name_2.fastq.gz] -p [taxonom
 singlem microbial_fraction -1 [sample_name_1.fastq.gz] -2 [sample_name_2.fastq.gz] -p [taxonomic profile] > sample_name_smf
 ```
 
-12. Create a **MMSeqs2** database for your peptides
+12. Concatenate files
 
 ```
-mmseqs createdb peptides.faa peptides_DB
-```
-
-13. Run **MMSeqs2** using the RAT reads as queries against the peptide database
-
-```
-mmseqs easy-search [RAT_1.fastq] peptides_DB [RAT_1.m8] tmp --alignment-mode 3 -s 7 --format-output "query,target,pident,qcov,tcov,evalue,bits,qlen,tlen,alnlen" --remove-tmp-files
-mmseqs easy-search [RAT_2.fastq] peptides_DB [RAT_2.m8] tmp --alignment-mode 3 -s 7 --format-output "query,target,pident,qcov,tcov,evalue,bits,qlen,tlen,alnlen" --remove-tmp-files
-mmseqs easy-search [RAT_single.fastq] peptides_DB [RAT_single.m8] tmp --alignment-mode 3 -s 7 --format-output "query,target,pident,qcov,tcov,evalue,bits,qlen,tlen,alnlen" --remove-tmp-files
-```
-
-14. Concatenate files
-
-```
-cat RAT_*.m8 > reads.m8
+cat reads_*.m8 > peptide_alignments.m8
 cat *read2classification.txt > read2classification.txt
 ```
 
-15. Run **get_abundance_and_taxonomy_v2.pl** to quantify peptides in copies per cell and get taxonomic classifications for each peptide based on the LCA of all reads that map to them. The RAT_otu_table output is useful if you want to calculate alpha-diversity metrics for each peptide afterwards.
+13. Run **get_abundance_and_taxonomy_v2.pl** to quantify peptides in copies per cell and get taxonomic classifications for each peptide based on the LCA of all reads that map to them. The RAT_otu_table output is useful if you want to calculate alpha-diversity metrics for each peptide afterwards.
 
 ```
-perl get_abundance_and_taxonomy_v2.pl --smf [sample_name_smf] --r2c [read2classification.txt] --m8 [reads.m8] --otu_table [RAT_otu_table] --max_evalue 100 --min_pident 100 --min_qcov 0 --min_alnlen 7 --min_tcov 1 > RAT_abundance_and_tax
+perl get_abundance_and_taxonomy_v2.pl --type blastx --smf [sample_name_smf] --r2c [read2classification.txt] --m8 [peptide_alignments.m8] --otu_table [peptide_otu_table.tsv] --max_evalue 1e-2 --min_pident 100 --min_qcov 0 --min_alnlen 7 --min_tcov 0.7 > peptide_abundance_and_taxonomy.txt
 ```

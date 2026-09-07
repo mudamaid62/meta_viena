@@ -4,7 +4,6 @@ use strict;
 use Getopt::Long qw(GetOptions);
 
 my $help = "";
-my $usage = "Quantify genes/proteins/peptides in copies per cell and get related taxonomies\n\nUSAGE\n$0 --smf [singleM microbial_fraction file] --r2c [RAT read2classification file] --m8 [mmseqs easy-search file] --otu_table [OTU table output] > [Abundance and Taxonomy table]\n\nOptional arguments:\n\t--max_evalue\t[float 0-inf]\tdefault = 1e-7\n\t--min_pident\t[float 0-100]\tdefault = 80\n\t--min_qcov\t[float 0-1]\tdefault = 0.75\n\t--min_tcov\t[float 0-1]\tdefault = 0\n\t--min_alnlen\t[int in aa]\tdefault = 25\n";
 my $smf_file = "";
 my $rat_r2c = "";
 my $m8_file = "";
@@ -12,8 +11,19 @@ my $otu_table = "";
 my $max_evalue = 1e-7;
 my $min_pident = 80;
 my $min_qcov = 0.75;
-my $min_alnlen = 25;
+my $min_alnlen = undef; # Set to undef to detect user overrides
 my $min_tcov = 0;
+my $type = "blastx"; #blastx, blastn, blastp
+
+my $usage = "Quantify genes/proteins/peptides in copies per cell and get related taxonomies\n\n"
+          . "USAGE\n$0 --smf [singleM file] --r2c [RAT r2c file] --m8 [m8 alignment file] --otu_table [output file]\n\n"
+          . "Optional arguments:\n"
+          . "\t--type\t\t[blastx|blastn|blastp]\tDefault = blastx\n"
+          . "\t--max_evalue\t[float 0-inf]\t\tDefault = 1e-7\n"
+          . "\t--min_pident\t[float 0-100]\t\tDefault = 80\n"
+          . "\t--min_qcov\t[float 0-1]\t\tDefault = 0.75\n"
+          . "\t--min_tcov\t[float 0-1]\t\tDefault = 0\n"
+          . "\t--min_alnlen\t[int]\t\t\tDefault = 25 (blastx/blastp in AA) or 75 (blastn in NT)\n";
 
 GetOptions(
 	'help' => \$help,
@@ -26,8 +36,20 @@ GetOptions(
 	'min_qcov=f' => \$min_qcov,
 	'min_alnlen=i' => \$min_alnlen,
 	'min_tcov=f' => \$min_tcov,
+	'type=s' => \$type,
 ) or die "$usage";
 
+my %available_flavors = ("blastx" => 1, "blastn" => 1, "blastp" => 1);
+if(!exists $available_flavors{$type}){
+    die "Error: --type must be blastx, blastn, or blastp\n";
+}
+if(!defined $min_alnlen) {
+	if ($type eq "blastn") {
+		$min_alnlen = 75; # Equivalent to 25 AA in nucleotide space
+	}else{
+		$min_alnlen = 25; # 25 AA for blastx and blastp
+	}
+}
 if($help){
 	die "$usage";
 }elsif($smf_file eq "" or $rat_r2c eq "" or $m8_file eq ""){
@@ -47,8 +69,8 @@ if($help){
 }
 
 my $cell_number = 0;
-open(SMF,"$smf_file");
-while(my $x = <SMF>){
+open(my $smf,'<',"$smf_file") or die "Could not open file '$smf_file': $!\n";
+while(my $x = <$smf>){
 	chomp($x);
 	my @array = split(/\t/,$x);
 	if($array[1] eq "bacterial_archaeal_bases"){
@@ -57,10 +79,10 @@ while(my $x = <SMF>){
 		$cell_number = $array[1]/$array[4];
 	}
 }
-close SMF;
+close $smf;
 my %reads;
-open(RAT,"$rat_r2c");
-while(my $y = <RAT>){
+open(my $rat,'<',"$rat_r2c") or die "Could not open file '$rat_r2c': $!\n";
+while(my $y = <$rat>){
 	chomp($y);
 	if($y =~ m/^\#/){
 		next;
@@ -88,8 +110,8 @@ while(my $y = <RAT>){
 		$reads{$y_array[0]} = solve_tax($tax_to_solve);
 	}
 }
-close RAT;
-open(MM,"$m8_file");
+close $rat;
+open(my $mm,'<',"$m8_file") or die "Could not open file '$m8_file': $!\n";
 my %best_hit_bitscore;
 my %best_hit;
 my %valid_reads;
@@ -97,16 +119,20 @@ my %selected_targets;
 my %abundances;
 my %counts;
 print "Protein\tCounts\tAbundance (copies/cell)\tBest_taxonomy\n";
-while(my $z = <MM>){
+while(my $z = <$mm>){
 	chomp($z);
-	my($query,$target,$pident,$qcov,$tcov,$evalue,$bits,$qlen,$tlen,$alnlen) = split(/\t/,$z);
+	my($query,$target,$pident,$qcov,$tcov,$evalue,$bits,$qlen,$tlen,$alnlen,$qseq) = split(/\t/,$z);
 	#if($evalue <= 100 and $pident >= 100 and $qcov >= 0 and $alnlen >= 7 and $tcov >= 1){
-	if($evalue <= $max_evalue and $pident >= $min_pident and $qcov >= $min_qcov and $alnlen >= $min_alnlen and $tcov >= $min_tcov){
+	if($evalue <= $max_evalue && $pident >= $min_pident && $qcov >= $min_qcov && $alnlen >= $min_alnlen && $tcov >= $min_tcov){
+		my $tlen_normalized = $tlen;
+		if($type eq "blastx"){
+			$tlen_normalized = ($tlen * 3) + 3; # Target protein (AA) to NT space
+		}
 		$valid_reads{$query} = $qlen;
 		if(!exists($selected_targets{$target})){
 			$abundances{$target} = 0;
 			$counts{$target} = 0;
-			$selected_targets{$target} = ($tlen*3)+3;
+			$selected_targets{$target} = $tlen_normalized;
 		}
 		if(!exists($best_hit{$query})){
 			$best_hit{$query} = $target;
@@ -117,7 +143,7 @@ while(my $z = <MM>){
 		}
 	}
 }		
-close MM;
+close $mm;
 my %tax_to_solve;
 my $spaciator = "-" x 30;
 my %observed_taxonomies;
@@ -150,7 +176,7 @@ foreach my $i(sort keys %abundances){
         print STDERR "Solved, best tax is $final_taxonomy{$i}\n";
         print "$i\t$counts{$i}\t$final_abundance\t$final_taxonomy{$i}\n";
 }
-open(OTU,">$otu_table");
+open(my $otu,'>',"$otu_table");
 my %otu_taxonomies;
 foreach my $o(sort keys %observed_taxonomies){
         my $final_abundance = $observed_taxonomies{$o}/$cell_number;
@@ -167,9 +193,9 @@ foreach my $o(sort keys %observed_taxonomies){
 }
 foreach my $o(sort keys %otu_taxonomies){
         my($protein,$obs_tax) = split(/~/,$o);
-	print OTU "$obs_tax\t$protein\t$otu_taxonomies{$o}\n";
+	print $otu "$obs_tax\t$protein\t$otu_taxonomies{$o}\n";
 }
-close OTU;
+close $otu;
 
 sub solve_tax{
 	my $string = shift;
