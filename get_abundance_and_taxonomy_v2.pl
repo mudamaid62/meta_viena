@@ -43,8 +43,8 @@ my %available_flavors = ("blastx" => 1, "blastn" => 1, "blastp" => 1);
 if(!exists $available_flavors{$type}){
     die "Error: --type must be blastx, blastn, or blastp\n";
 }
-if(!defined $min_alnlen) {
-	if ($type eq "blastn") {
+if(!defined $min_alnlen){
+	if($type eq "blastn"){
 		$min_alnlen = 75; # Equivalent to 25 AA in nucleotide space
 	}else{
 		$min_alnlen = 25; # 25 AA for blastx and blastp
@@ -122,12 +122,13 @@ print "Protein\tCounts\tAbundance (copies/cell)\tBest_taxonomy\n";
 while(my $z = <$mm>){
 	chomp($z);
 	my($query,$target,$pident,$qcov,$tcov,$evalue,$bits,$qlen,$tlen,$alnlen,$qseq) = split(/\t/,$z);
-	#if($evalue <= 100 and $pident >= 100 and $qcov >= 0 and $alnlen >= 7 and $tcov >= 1){
-	if($evalue <= $max_evalue && $pident >= $min_pident && $qcov >= $min_qcov && $alnlen >= $min_alnlen && $tcov >= $min_tcov){
-		my $tlen_normalized = $tlen;
-		if($type eq "blastx"){
-			$tlen_normalized = ($tlen * 3) + 3; # Target protein (AA) to NT space
-		}
+	my $alnlen_aa = $alnlen;
+	my $tlen_normalized = $tlen;
+	if($type eq "blastx"){
+		$alnlen_aa = $alnlen / 3;
+		$tlen_normalized = ($tlen * 3) + 3;
+	}
+	if($evalue <= $max_evalue && $pident >= $min_pident && $qcov >= $min_qcov && $alnlen_aa >= $min_alnlen && $tcov >= $min_tcov){
 		$valid_reads{$query} = $qlen;
 		if(!exists($selected_targets{$target})){
 			$abundances{$target} = 0;
