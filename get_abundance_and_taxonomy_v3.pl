@@ -1,0 +1,361 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+use Getopt::Long qw(GetOptions);
+
+my $help = "";
+my $smf_file = "";
+my $rat_r2c = "";
+my $m8_file = "";
+my $otu_table = "";
+my $max_evalue = 1e-7;
+my $min_pident = 80;
+my $min_qcov = 0.75;
+my $min_alnlen = undef; # Set to undef to detect user overrides
+my $min_tcov = 0;
+my $type = "blastx"; #blastx, blastn, blastp
+
+my $usage = "Quantify genes/proteins/peptides in copies per cell and get related taxonomies\n\n"
+          . "USAGE\n$0 --smf [singleM file] --r2c [RAT r2c file] --m8 [m8 alignment file] --otu_table [output file]\n\n"
+          . "Optional arguments:\n"
+          . "\t--type\t\t[blastx|blastn|blastp]\tDefault = blastx\n"
+          . "\t--max_evalue\t[float 0-inf]\t\tDefault = 1e-7\n"
+          . "\t--min_pident\t[float 0-100]\t\tDefault = 80\n"
+          . "\t--min_qcov\t[float 0-1]\t\tDefault = 0.75\n"
+          . "\t--min_tcov\t[float 0-1]\t\tDefault = 0\n"
+          . "\t--min_alnlen\t[int]\t\t\tDefault = 25 (blastx/blastp in AA) or 75 (blastn in NT)\n";
+
+GetOptions(
+	'help' => \$help,
+        'smf=s' => \$smf_file,
+        'r2c=s' => \$rat_r2c,
+        'm8=s' => \$m8_file,
+        'otu_table=s' => \$otu_table,
+	'max_evalue=f' => \$max_evalue,
+	'min_pident=f' => \$min_pident,
+	'min_qcov=f' => \$min_qcov,
+	'min_alnlen=i' => \$min_alnlen,
+	'min_tcov=f' => \$min_tcov,
+	'type=s' => \$type,
+) or die "$usage";
+
+my %available_flavors = ("blastx" => 1, "blastn" => 1, "blastp" => 1);
+if(!exists $available_flavors{$type}){
+    die "Error: --type must be blastx, blastn, or blastp\n";
+}
+if(!defined $min_alnlen){
+	if($type eq "blastn"){
+		$min_alnlen = 75; # Equivalent to 25 AA in nucleotide space
+	}else{
+		$min_alnlen = 25; # 25 AA for blastx and blastp
+	}
+}
+if($help){
+	die "$usage";
+}elsif($smf_file eq "" or $rat_r2c eq "" or $m8_file eq ""){
+        die "smf, r2c and m8 files are required\n";
+}elsif($otu_table eq ""){
+	die "otu_table output must be specified\n";
+}elsif($max_evalue < 0){
+	die "Max e-value must be a non-negative float\n";
+}elsif($min_pident < 0 or $min_pident > 100){
+	die "Min pident must be between 0 and 100\n";
+}elsif($min_qcov < 0 or $min_qcov > 1){
+        die "Min qcov must be between 0 and 1\n";
+}elsif($min_tcov < 0 or $min_tcov > 1){
+        die "Min tcov must be between 0 and 1\n";
+}elsif($min_alnlen < 0 or $min_alnlen !~ m/^-?\d+\z/){
+	die "Min alnlen must be a non-negative integer\n";
+}
+
+my $cell_number = 0;
+open(my $smf,'<',"$smf_file") or die "Could not open file '$smf_file': $!\n";
+while(my $x = <$smf>){
+	chomp($x);
+	my @array = split(/\t/,$x);
+	if($array[1] eq "bacterial_archaeal_bases"){
+		next;
+	}else{
+		$cell_number = $array[1]/$array[4];
+	}
+}
+close $smf;
+my %reads;
+open(my $rat,'<',"$rat_r2c") or die "Could not open file '$rat_r2c': $!\n";
+while(my $y = <$rat>){
+	chomp($y);
+	if($y =~ m/^\#/){
+		next;
+	}
+	my @y_array = split(/\t/,$y);
+	my $current_tax = "no taxid assigned";
+	if($y_array[1] eq "no taxid assigned"){
+		$current_tax = "no taxid assigned";
+	}elsif($y_array[2] ne ""){
+		$current_tax = $y_array[2];
+	}elsif($y_array[3] ne ""){
+                $current_tax = $y_array[3];
+        }elsif($y_array[4] ne ""){
+                $current_tax = $y_array[4];
+        }else{
+		my @tax_array = split(/ /,$y_array[5]);
+		my $useless = shift(@tax_array);
+		my $tax = join " ", @tax_array;
+		$current_tax = $tax;
+	}
+	if(!exists($reads{$y_array[0]})){
+		$reads{$y_array[0]} = $current_tax;
+	}else{
+		my $tax_to_solve = "$reads{$y_array[0]}~$current_tax";
+		$reads{$y_array[0]} = solve_tax($tax_to_solve);
+	}
+}
+close $rat;
+open(my $mm,'<',"$m8_file") or die "Could not open file '$m8_file': $!\n";
+my %query_hits;
+my %valid_reads;
+my %selected_targets;
+my %abundances;
+my %counts;
+print "Protein\tCounts\tAbundance (copies/cell)\tBest_taxonomy\n";
+while(my $z = <$mm>){
+	chomp($z);
+	my($query,$target,$pident,$qcov,$tcov,$evalue,$bits,$qlen,$tlen,$alnlen,$qseq) = split(/\t/,$z);
+	my $alnlen_aa = $alnlen;
+	my $tlen_normalized = $tlen;
+	if($type eq "blastx"){
+		$alnlen_aa = $alnlen / 3;
+		$tlen_normalized = ($tlen * 3) + 3;
+	}
+	if($evalue <= $max_evalue && $pident >= $min_pident && $qcov >= $min_qcov && $alnlen_aa >= $min_alnlen && $tcov >= $min_tcov){
+		$valid_reads{$query} = $qlen;
+		if(!exists($selected_targets{$target})){
+			$abundances{$target} = 0;
+			$counts{$target} = 0;
+			$selected_targets{$target} = $tlen_normalized;
+		}
+		push @{$query_hits{$query}}, {
+			target => $target,
+			bits => $bits,
+			qcov => $qcov,
+			tlen => $tlen_normalized,
+		};
+	}
+}		
+close $mm;
+my %tax_to_solve;
+my $spaciator = "-" x 30;
+my %observed_taxonomies;
+foreach my $q(keys %valid_reads){
+	#sort all hits in the reads by bitscore, from the highest to the lowest 
+	my @sorted_hits = sort {$b->{bits} <=> $a->{bits}} @{$query_hits{$q}};
+	my $used_qcov = 0;
+	my %seen_targets_in_read;
+	foreach my $hit(@sorted_hits){
+		my $target_id = $hit->{target};
+		#Do not count an already seen peptide in this read
+		next if $seen_targets_in_read{$target_id};
+		#if the coverage sum does not exceed 100% of the read, i.e, the hits do not physiscally overlap
+		if(($used_qcov + $hit->{qcov}) <= 1.05){ #1.05 allows for some ORF flexibility
+        		my $value = $valid_reads{$q}/$selected_targets{$target_id};
+        		$abundances{$target_id} += $value;
+        		$counts{$target_id}++;
+        		my $pair = "$target_id~$reads{$q}";
+			$observed_taxonomies{$pair} += $value;
+        		if(!exists($tax_to_solve{$target_id})){
+				$tax_to_solve{$target_id} = $reads{$q};
+        		}else{
+				$tax_to_solve{$target_id} .= "~$reads{$q}";
+        		}
+			#Do not allow the same target again in this read and accumulate qcov
+			$seen_targets_in_read{$target_id} = 1;
+			$used_qcov += $hit->{qcov};
+		}
+	}
+}
+my %final_taxonomy;
+foreach my $i(sort keys %abundances){
+        if($abundances{$i} == 0){
+                next;
+        }
+        my $final_abundance = $abundances{$i}/$cell_number;
+        print STDERR "$spaciator\nSolving tax for $i\n";
+        $final_taxonomy{$i} = solve_tax($tax_to_solve{$i});
+        print STDERR "Solved, best tax is $final_taxonomy{$i}\n";
+        print "$i\t$counts{$i}\t$final_abundance\t$final_taxonomy{$i}\n";
+}
+open(my $otu,'>',"$otu_table");
+my %otu_taxonomies;
+foreach my $o(sort keys %observed_taxonomies){
+        my $final_abundance = $observed_taxonomies{$o}/$cell_number;
+        my($protein,$obs_tax) = split(/~/,$o);
+	if(exists($final_taxonomy{$protein})){
+		my $group_solved_tax = $final_taxonomy{$protein};
+		my $this_solved_tax = solve_tax("$group_solved_tax~$obs_tax");
+		if($this_solved_tax eq $group_solved_tax){
+			$otu_taxonomies{"$protein~$group_solved_tax"} += $final_abundance;
+		}else{
+			$otu_taxonomies{"$protein~$this_solved_tax"} += $final_abundance;
+		}
+	}
+}
+foreach my $o(sort keys %otu_taxonomies){
+        my($protein,$obs_tax) = split(/~/,$o);
+	print $otu "$obs_tax\t$protein\t$otu_taxonomies{$o}\n";
+}
+close $otu;
+
+sub solve_tax{
+	my $string = shift;
+	my @taxonomies = split(/~/,$string);
+	my $best_tax = "no taxid assigned";
+	if(scalar(@taxonomies) == 1){
+		$best_tax = $taxonomies[0];
+		#print STDERR "No need to solve, tax is $best_tax\n";
+		return $best_tax;
+	}else{
+		my $conflict = "no conflict";
+		my @roots;
+		my @domains;
+		my @phyla;
+		my @classes;
+		my @orders;
+		my @families;
+		my @genera;
+		my @species;
+		#print STDERR "Observed taxa:\n";
+		foreach my $t(@taxonomies){
+			#print STDERR "$t\n";
+			if($t eq "no taxid assigned"){
+				next;
+			}
+			my @levels = split(/\;/,$t);
+			if(defined($levels[0])){
+				push @roots,$levels[0];
+			}
+			if(defined($levels[1])){
+                                push @domains,$levels[1];
+                        }
+			if(defined($levels[2])){
+                                push @phyla,$levels[2];
+                        }
+			if(defined($levels[3])){
+                                push @classes,$levels[3];
+                        }
+			if(defined($levels[4])){
+                                push @orders,$levels[4];
+                        }
+			if(defined($levels[5])){
+                                push @families,$levels[5];
+                        }
+			if(defined($levels[6])){
+                                push @genera,$levels[6];
+                        }
+			if(defined($levels[7])){
+                                push @species,$levels[7];
+                        }
+		}
+		my $i = 0;
+		while($conflict eq "no conflict" and $i <= 7){
+			if($i == 0){
+				if(scalar(@roots) > 0){
+					my $current = $roots[0];
+					foreach my $k(@roots){
+						if($k ne $current){
+							$conflict = "found conflict";
+						}
+					}
+					if($conflict eq "no conflict"){
+						$best_tax = $current;
+					}
+				}
+			}elsif($i == 1){
+                                if(scalar(@domains) > 0){
+                                        my $current = $domains[0];
+                                        foreach my $k(@domains){
+                                                if($k ne $current){
+                                                        $conflict = "found conflict";
+                                                }
+                                        }
+					if($conflict eq "no conflict"){
+                                                $best_tax .= ";$current";
+                                        }
+                                }
+                        }elsif($i == 2){
+                                if(scalar(@phyla) > 0){
+                                        my $current = $phyla[0];
+                                        foreach my $k(@phyla){
+                                                if($k ne $current){
+                                                        $conflict = "found conflict";
+                                                }
+                                        }
+                                        if($conflict eq "no conflict"){
+                                                $best_tax .= ";$current";
+                                        }
+                                }
+                        }elsif($i == 3){
+                                if(scalar(@classes) > 0){
+                                        my $current = $classes[0];
+                                        foreach my $k(@classes){
+                                                if($k ne $current){
+                                                        $conflict = "found conflict";
+                                                }
+                                        }
+                                        if($conflict eq "no conflict"){
+                                                $best_tax .= ";$current";
+                                        }
+                                }
+                        }elsif($i == 4){
+                                if(scalar(@orders) > 0){
+                                        my $current = $orders[0];
+                                        foreach my $k(@orders){
+                                                if($k ne $current){
+                                                        $conflict = "found conflict";
+                                                }
+                                        }
+                                        if($conflict eq "no conflict"){
+                                                $best_tax .= ";$current";
+                                        }
+                                }
+                        }elsif($i == 5){
+                                if(scalar(@families) > 0){
+                                        my $current = $families[0];
+                                        foreach my $k(@families){
+                                                if($k ne $current){
+                                                        $conflict = "found conflict";
+                                                }
+                                        }
+                                        if($conflict eq "no conflict"){
+                                                $best_tax .= ";$current";
+                                        }
+                                }
+                        }elsif($i == 6){
+                                if(scalar(@genera) > 0){
+                                        my $current = $genera[0];
+                                        foreach my $k(@genera){
+                                                if($k ne $current){
+                                                        $conflict = "found conflict";
+                                                }
+                                        }
+                                        if($conflict eq "no conflict"){
+                                                $best_tax .= ";$current";
+                                        }
+                                }
+                        }elsif($i == 7){
+                                if(scalar(@species) > 0){
+                                        my $current = $species[0];
+                                        foreach my $k(@species){
+                                                if($k ne $current){
+                                                        $conflict = "found conflict";
+                                                }
+                                        }
+                                        if($conflict eq "no conflict"){
+                                                $best_tax .= ";$current";
+                                        }
+                                }
+                        }
+			$i++;
+		}
+		return "$best_tax";
+	}
+}
