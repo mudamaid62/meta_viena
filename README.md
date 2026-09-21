@@ -224,5 +224,5 @@ cat *read2classification.txt > read2classification.txt
 13. Run **get_abundance_and_taxonomy_v2.pl** to quantify peptides in copies per cell and get taxonomic classifications for each peptide based on the LCA of all reads that map to them. The RAT_otu_table output is useful if you want to calculate alpha-diversity metrics for each peptide afterwards.
 
 ```
-perl get_abundance_and_taxonomy_v3.pl --type blastx --smf [sample_name_smf] --r2c [read2classification.txt] --m8 [peptide_alignments.m8] --otu_table [peptide_otu_table.tsv] --max_evalue 100 --min_pident 100 --min_qcov 0 --min_alnlen 7 --min_tcov 0.7 > peptide_abundance_and_taxonomy.txt
+perl get_abundance_and_taxonomy_v3.pl --type blastx --smf [sample_name_smf] --r2c [read2classification.txt] --m8 [peptide_alignments.m8] --otu_table [peptide_otu_table.tsv] --max_evalue 100 --min_pident 100 --min_qcov 0 --min_alnlen 7 --min_tcov 1 > peptide_abundance_and_taxonomy.txt
 ```
