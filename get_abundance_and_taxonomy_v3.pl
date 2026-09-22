@@ -147,32 +147,34 @@ my %tax_to_solve;
 my $spaciator = "-" x 30;
 my %observed_taxonomies;
 foreach my $q(keys %valid_reads){
-	#sort all hits in the reads by bitscore, from the highest to the lowest 
 	my @sorted_hits = sort {$b->{bits} <=> $a->{bits}} @{$query_hits{$q}};
 	my $used_qcov = 0;
 	my %seen_targets_in_read;
 	foreach my $hit(@sorted_hits){
 		my $target_id = $hit->{target};
-		#Do not count an already seen peptide in this read
 		next if $seen_targets_in_read{$target_id};
-		#if the coverage sum does not exceed 100% of the read, i.e, the hits do not physiscally overlap
-		if(($used_qcov + $hit->{qcov}) <= 1.05){ #1.05 allows for some ORF flexibility
-        		my $value = $valid_reads{$q}/$selected_targets{$target_id};
-        		$abundances{$target_id} += $value;
-        		$counts{$target_id}++;
-        		my $pair = "$target_id~$reads{$q}";
+		#Flag to determine if hits are acccepted:
+		#In exact mode (100% id and tcov 1.0), all hits are accepted
+		#Otherwise, the physical capacity is evaluated (qcov <= 1.05)
+		my $is_exact_mode = ($min_pident == 100 && $min_tcov == 1);
+		my $fits_in_read = (($used_qcov + $hit->{qcov}) <= 1.05);
+		if($is_exact_mode || $fits_in_read){
+			my $value = $valid_reads{$q}/$selected_targets{$target_id};
+			$abundances{$target_id} += $value;
+			$counts{$target_id}++;
+			my $pair = "$target_id~$reads{$q}";
 			$observed_taxonomies{$pair} += $value;
-        		if(!exists($tax_to_solve{$target_id})){
+			if(!exists($tax_to_solve{$target_id})){
 				$tax_to_solve{$target_id} = $reads{$q};
-        		}else{
+			}else{
 				$tax_to_solve{$target_id} .= "~$reads{$q}";
-        		}
-			#Do not allow the same target again in this read and accumulate qcov
+			}
 			$seen_targets_in_read{$target_id} = 1;
 			$used_qcov += $hit->{qcov};
 		}
 	}
 }
+			
 my %final_taxonomy;
 foreach my $i(sort keys %abundances){
         if($abundances{$i} == 0){
